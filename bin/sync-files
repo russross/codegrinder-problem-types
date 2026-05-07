@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+script_dir=${0%/*}
+if [ "$script_dir" = "$0" ]; then
+    script_dir=.
+fi
+root=$(cd "$script_dir/.." && pwd)
+
+if [ "$#" -gt 0 ]; then
+    type_dirs=
+    for type_name in "$@"; do
+        type_dirs="$type_dirs $root/types/$type_name"
+    done
+else
+    type_dirs="$root"/types/*
+fi
+
+for type_dir in $type_dirs; do
+    [ -d "$type_dir" ] || continue
+    type_name=${type_dir##*/}
+    if [ ! -f "$type_dir/type.conf" ]; then
+        echo "skipping $type_name: missing type.conf" >&2
+        continue
+    fi
+    if [ ! -d "$type_dir/files" ]; then
+        echo "error: $type_name missing files directory" >&2
+        exit 1
+    fi
+    (cd "$type_dir/files" && grind problemtype files --type "$type_name" --set)
+done

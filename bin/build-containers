@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+script_dir=${0%/*}
+if [ "$script_dir" = "$0" ]; then
+    script_dir=.
+fi
+root=$(cd "$script_dir/.." && pwd)
+
+engine=${CONTAINER_ENGINE:-}
+if [ -z "$engine" ]; then
+    if command -v podman >/dev/null 2>&1; then
+        engine=podman
+    elif command -v docker >/dev/null 2>&1; then
+        engine=docker
+    else
+        echo "error: set CONTAINER_ENGINE or install podman/docker" >&2
+        exit 1
+    fi
+fi
+
+if [ "$#" -gt 0 ]; then
+    container_dirs=
+    for name in "$@"; do
+        container_dirs="$container_dirs $root/containers/$name"
+    done
+else
+    container_dirs="$root"/containers/*
+fi
+
+for container_dir in $container_dirs; do
+    [ -d "$container_dir" ] || continue
+    name=${container_dir##*/}
+    [ -f "$container_dir/Dockerfile" ] || continue
+    "$engine" build --network=host --pull -t "codegrinder/$name" "$container_dir"
+done
