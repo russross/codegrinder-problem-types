@@ -27,5 +27,11 @@ for type_dir in $type_dirs; do
         echo "error: $type_name missing files directory" >&2
         exit 1
     fi
+    broken_symlinks=$(find "$type_dir/files" -type l ! -exec test -e {} \; -print)
+    if [ -n "$broken_symlinks" ]; then
+        echo "error: $type_name has broken symlink(s):" >&2
+        printf '%s\n' "$broken_symlinks" >&2
+        exit 1
+    fi
     (cd "$type_dir/files" && grind problemtype files --type "$type_name" --set)
 done
