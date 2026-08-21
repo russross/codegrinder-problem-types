@@ -3,6 +3,7 @@ import os
 import sys
 import trace
 import unittest
+from typing import List, Optional, Type
 
 class ASTTest(unittest.TestCase):
 
@@ -30,6 +31,40 @@ class ASTTest(unittest.TestCase):
             if isinstance(node, node_type):
                 nodes.append(node)
         return nodes
+
+    @staticmethod
+    def is_constant(node: ast.AST, value_type: Type[object]) -> bool:
+        """Returns whether a node is a constant of exactly the given type."""
+        return isinstance(node, ast.Constant) and type(node.value) is value_type
+
+    def find_constants(
+            self,
+            value_type: Type[object],
+            start_node: Optional[ast.AST] = None,
+            ) -> List[ast.Constant]:
+        """Returns constants whose values have exactly the given type."""
+        return [
+                node for node in self.find_all(ast.Constant, start_node)
+                if self.is_constant(node, value_type)
+                ]
+
+    @staticmethod
+    def is_numeric_constant(node: ast.AST) -> bool:
+        """Returns whether a node is a numeric, non-Boolean constant."""
+        return (
+                isinstance(node, ast.Constant)
+                and type(node.value) in (int, float, complex)
+                )
+
+    def find_numeric_constants(
+            self,
+            start_node: Optional[ast.AST] = None,
+            ) -> List[ast.Constant]:
+        """Returns numeric constants, excluding Boolean constants."""
+        return [
+                node for node in self.find_all(ast.Constant, start_node)
+                if self.is_numeric_constant(node)
+                ]
 
     def print_replacement(self, *text, **kwargs):
         """Saves printed lines to a data member. Used by exec_solution, not

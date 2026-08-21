@@ -2,3 +2,7 @@ Makefile
 __pycache__
 *.swp
 *.pyc
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

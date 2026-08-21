@@ -4,8 +4,8 @@
 ALLSRC=$(wildcard *.s)
 START=$(filter start.s, $(ALLSRC))
 AOUTSRC=$(START) $(filter-out $(START), $(ALLSRC))
+RISCLET_VERSION=v0.4.5
 
-RISCLET_VERSION=v0.4.3
 STEPPER_CMD=risclet run --check-abi $(AOUTSRC)
 STEPPER_DIR=inputs
 STEPPER_TIMEOUT=5
@@ -37,53 +37,17 @@ clean:
 
 .PHONY: risclet
 risclet:
-	@set -e; \
-	if ! command -v risclet >/dev/null 2>&1; then \
-		echo "risclet not found, installing..."; \
-		$(MAKE) _install_risclet; \
-	else \
-		INSTALLED_VERSION="v$$(risclet --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"; \
-		if [ "$$INSTALLED_VERSION" != "$(RISCLET_VERSION)" ]; then \
-			echo "upgrading risclet to version $(RISCLET_VERSION)..."; \
-			$(MAKE) _install_risclet; \
-		fi; \
+	@installed_version=$$("$$HOME/.local/bin/risclet" --version 2>/dev/null | awk '{ \
+		for (i = 1; i <= NF; i++) { \
+			if ($$i ~ /^v?[0-9]+\.[0-9]+\.[0-9]+$$/) { \
+				sub(/^v/, "", $$i); \
+				print "v" $$i; \
+				exit; \
+			} \
+		} \
+	}'); \
+	if [ "$$installed_version" != "$(RISCLET_VERSION)" ] \
+			|| [ -e /usr/local/bin/risclet ] \
+			|| [ -L /usr/local/bin/risclet ]; then \
+		update-grind risclet "$(RISCLET_VERSION)"; \
 	fi
-
-.PHONY: _install_risclet
-_install_risclet:
-	@set -e; \
-	OS_NAME=$$(uname -s); \
-	ARCH_NAME=$$(uname -m); \
-	case "$$ARCH_NAME" in \
-		arm64|aarch64) ARCH_NAME="aarch64" ;; \
-		x86_64|amd64) ARCH_NAME="x86_64" ;; \
-		*) echo "ERROR: Unsupported architecture: $$ARCH_NAME" >&2; exit 1 ;; \
-	esac; \
-	case "$$OS_NAME-$$ARCH_NAME" in \
-		"Darwin-x86_64") RISCLET_BINARY="risclet-x86_64-apple-darwin" ;; \
-		"Darwin-aarch64") RISCLET_BINARY="risclet-aarch64-apple-darwin" ;; \
-		"Linux-x86_64") RISCLET_BINARY="risclet-x86_64-unknown-linux-musl" ;; \
-		"Linux-aarch64") RISCLET_BINARY="risclet-aarch64-unknown-linux-musl" ;; \
-		*) echo "ERROR: Unsupported platform: $$OS_NAME on $$ARCH_NAME" >&2; exit 1 ;; \
-	esac; \
-	RISCLET_URL="https://github.com/russross/risclet/releases/download/$(RISCLET_VERSION)/$$RISCLET_BINARY"; \
-	echo "your password may be required"; \
-	echo "downloading risclet for $$OS_NAME on $$ARCH_NAME..."; \
-	TMPFILE=$$(mktemp); \
-	if ! curl -fsSL "$$RISCLET_URL" -o "$$TMPFILE"; then \
-		rm -f "$$TMPFILE"; \
-		echo "ERROR: Failed to download risclet from $$RISCLET_URL" >&2; \
-		exit 1; \
-	fi; \
-	if [ ! -d "/usr/local/bin" ]; then \
-		echo "Creating /usr/local/bin..."; \
-		sudo mkdir -p "/usr/local/bin"; \
-	fi; \
-	echo "installing risclet to /usr/local/bin..."; \
-	sudo mv "$$TMPFILE" "/usr/local/bin/risclet"; \
-	sudo chmod 755 "/usr/local/bin/risclet"; \
-	case ":$$PATH:" in \
-		*:/usr/local/bin:*) ;; \
-		*) echo "Adding /usr/local/bin to PATH"; export PATH="/usr/local/bin:$$PATH" ;; \
-	esac; \
-	echo "risclet $$(risclet --version) installed successfully"

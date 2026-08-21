@@ -3,9 +3,9 @@
 
 all:	amd64
 
-arm64: .proxy-c .proxy-go .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite .proxy-prolog .proxy-typescript
+arm64: .proxy-c .proxy-go .proxy-javascript .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite .proxy-prolog .proxy-typescript
 
-amd64: .proxy-c .proxy-go .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite
+amd64: .proxy-c .proxy-go .proxy-javascript .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite
 
 .proxy-c: c/Dockerfile
 	docker build --network=host --pull -t codegrinder/c c
@@ -18,6 +18,10 @@ amd64: .proxy-c .proxy-go .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite
 .proxy-go: go/Dockerfile
 	docker build --network=host --pull -t codegrinder/go go
 	touch .proxy-go
+
+.proxy-javascript: javascript/Dockerfile
+	docker build --network=host --pull -t codegrinder/javascript javascript
+	touch .proxy-javascript
 
 .proxy-nand2tetris: nand2tetris/Dockerfile
 	docker build --network=host --pull -t codegrinder/nand2tetris nand2tetris
