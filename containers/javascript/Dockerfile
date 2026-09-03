@@ -11,9 +11,9 @@ RUN apk add --no-cache \
     npm
 
 RUN npm install -g --no-audit --no-fund \
-    jest \
-    jest-junit \
-    acorn \
+    jest@30.4.2 \
+    jest-junit@17.0.0 \
+    acorn@8.17.0 \
     && \
     npm cache clean --force
 
