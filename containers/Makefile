@@ -1,19 +1,8 @@
-# run "make amd64" to build Intel-based containers
-# run "make arm64" to build 64-bit ARM-based containers
-
-all:	amd64
-
-arm64: .proxy-c .proxy-go .proxy-javascript .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite .proxy-prolog .proxy-typescript
-
-amd64: .proxy-c .proxy-go .proxy-javascript .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite
+all: .proxy-c .proxy-go .proxy-javascript .proxy-prolog .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite
 
 .proxy-c: c/Dockerfile
 	docker build --network=host --pull -t codegrinder/c c
 	touch .proxy-c
-
-.proxy-forth: forth/Dockerfile
-	docker build --network=host --pull -t codegrinder/forth forth
-	touch .proxy-forth
 
 .proxy-go: go/Dockerfile
 	docker build --network=host --pull -t codegrinder/go go
@@ -22,10 +11,6 @@ amd64: .proxy-c .proxy-go .proxy-javascript .proxy-python .proxy-riscv .proxy-ru
 .proxy-javascript: javascript/Dockerfile
 	docker build --network=host --pull -t codegrinder/javascript javascript
 	touch .proxy-javascript
-
-.proxy-nand2tetris: nand2tetris/Dockerfile
-	docker build --network=host --pull -t codegrinder/nand2tetris nand2tetris
-	touch .proxy-nand2tetris
 
 .proxy-prolog: prolog/Dockerfile
 	docker build --network=host --pull -t codegrinder/prolog prolog
@@ -46,11 +31,3 @@ amd64: .proxy-c .proxy-go .proxy-javascript .proxy-python .proxy-riscv .proxy-ru
 .proxy-sqlite: sqlite/Dockerfile
 	docker build --network=host --pull -t codegrinder/sqlite sqlite
 	touch .proxy-sqlite
-
-.proxy-standardml: standardml/Dockerfile
-	docker build --network=host --pull -t codegrinder/standardml standardml
-	touch .proxy-standardml
-
-.proxy-typescript: typescript/Dockerfile
-	docker build --network=host --pull -t codegrinder/typescript typescript
-	touch .proxy-typescript

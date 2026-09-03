@@ -23,7 +23,7 @@ class ASTTest(unittest.TestCase):
     def find_all(self, node_type, start_node=None):
         """Returns all of the AST nodes matching the given node type. Optional
         start_node parameter allows walking a specific portion of the original
-        tree. TODO: list common node types here for easy access."""
+        tree."""
         if start_node is None:
             start_node = self.tree
         nodes = []
@@ -163,28 +163,27 @@ class ASTTest(unittest.TestCase):
             importlib.reload(m)
         # run the helper function (trigger) to trigger evaluation of the solution
         tracer.runfunc(trigger, basename)
-        # write tracing results to a *.cover file
-        tracer.results().write_results(coverdir='.')
-        # count how many lines were skipped
-        all_skipped = []
-        f = open(basename+".cover")
-        lineno = 0
-        for line in f:
-            lineno += 1
-            if line[:6] == ">>>>>>":
-                # skipped line
-                all_skipped.append((line[8:], lineno))
-        f.close()
-        # clean up cover file
-        os.remove(basename+".cover")
         # count executable lines
         visitor = FindExecutableLines()
         visitor.visit(self.tree)
         all_executable_lines = set(visitor.lines)
+        # CoverageResults.counts is available in CPython and Pyodide. Reading
+        # it directly avoids the platform-specific formatting and filesystem
+        # behavior of trace's annotated *.cover files.
+        solution_path = os.path.normcase(os.path.abspath(self.filename))
+        lines_hit = {
+                lineno
+                for (filename, lineno) in tracer.results().counts
+                if os.path.normcase(os.path.abspath(filename)) == solution_path
+                }
+        source_lines = self.file.splitlines()
+        all_skipped = [
+                (source_lines[lineno-1], lineno)
+                for lineno in sorted(all_executable_lines - lines_hit)
+                ]
         # compare skipped lines with actual lines
         total_lines = 0
         skipped_lines = []
-        executable_lines = []
         linenos = self.get_function_linenos()
         for funcname in function_names:
             self.assertIn(funcname, linenos, "Function {} is not "
