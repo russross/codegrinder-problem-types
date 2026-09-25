@@ -4,7 +4,7 @@
 ALLSRC=$(wildcard *.s)
 START=$(filter start.s, $(ALLSRC))
 AOUTSRC=$(START) $(filter-out $(START), $(ALLSRC))
-RISCLET_VERSION=v0.4.5
+RISCLET_VERSION=v0.4.8
 
 STEPPER_CMD=risclet run --check-abi $(AOUTSRC)
 STEPPER_DIR=inputs
