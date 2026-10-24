@@ -4,9 +4,9 @@
 ALLSRC=$(wildcard *.s)
 START=$(filter start.s, $(ALLSRC))
 AOUTSRC=$(START) $(filter-out $(START), $(ALLSRC))
-RISCLET_VERSION=v0.4.8
+RISCLET_VERSION=v0.5.5
 
-STEPPER_CMD=risclet run --check-abi $(AOUTSRC)
+STEPPER_CMD=risclet run --strict $(AOUTSRC)
 STEPPER_DIR=inputs
 STEPPER_TIMEOUT=5
 STEPPER_POSTERRORLINES=15
@@ -17,14 +17,14 @@ all:	step
 
 grade:	export STEPPER_GRADE := true
 grade:	risclet
-	@rm -f test_details.xml
-	python3 lib/stepper
+	@rm -f test_detail.xml
+	sh lib/stepper -- $(STEPPER_CMD)
 
 run:	risclet
 	risclet run $(AOUTSRC)
 
 step:	risclet
-	python3 lib/stepper
+	sh lib/stepper -- $(STEPPER_CMD)
 
 trace:	risclet
 	risclet trace $(AOUTSRC)

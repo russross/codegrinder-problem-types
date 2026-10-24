@@ -1,4 +1,4 @@
-                .global print_string, print_int, print_hex, print_set
+                .global print_string, print_int, print_hex, print_set, print_int_array
                 .equ    stdout, 1
                 .equ    sys_write, 64
                 .equ    sys_exit, 93
@@ -6,6 +6,8 @@
                 .equ    print_int_args, 1
                 .equ    print_hex_args, 1
                 .equ    print_set_args, 1
+                .equ    print_int_array_args, 2
+
                 .text
 
 # print_string(s)
@@ -74,6 +76,46 @@ print_int:
                 mv      a0, sp
                 jal     print_string
 5:              lw      ra, 12(sp)
+                addi    sp, sp, 16
+                ret
+
+# print_int_array(start, end) prints aligned int words in [start, end), without a newline.
+                .data
+int_array_open: .asciz  "["
+int_array_sep:  .asciz  ", "
+int_array_close:.asciz  "]"
+                .text
+print_int_array:
+                # prelude
+                addi    sp, sp, -16
+                sw      ra, 12(sp)
+                sw      s0, 8(sp)
+                sw      s1, 4(sp)
+                mv      s0, a0
+                mv      s1, a1
+
+                # empty ranges still print both brackets.
+                la      a0, int_array_open
+                jal     print_string
+                bgeu    s0, s1, 2f
+
+                # print each value, separating only adjacent elements.
+1:              lw      a0, (s0)
+                jal     print_int
+                addi    s0, s0, 4
+                bgeu    s0, s1, 2f
+                la      a0, int_array_sep
+                jal     print_string
+                j       1b
+
+                # close the array
+2:              la      a0, int_array_close
+                jal     print_string
+
+                # postlude
+                lw      ra, 12(sp)
+                lw      s0, 8(sp)
+                lw      s1, 4(sp)
                 addi    sp, sp, 16
                 ret
 
