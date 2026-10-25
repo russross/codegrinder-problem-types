@@ -2,6 +2,7 @@
 .SUFFIXES: .o .opt.o .c .out .xml .input .transcript
 .PHONY: all grade run step setup clean
 
+CC=$(shell if command -v clang >/dev/null 2>&1 || ! command -v tcc >/dev/null 2>&1; then echo clang; else echo tcc; fi)
 CSTD=-std=c18
 SAN=-fsanitize=address,undefined -fno-omit-frame-pointer
 WARN=-Wall -Wextra -Wpedantic -Wshadow -Wpointer-arith -Wcast-qual -Wwrite-strings -Wvla -Wstrict-prototypes -Wold-style-definition -Wformat=2 -Wswitch-enum
@@ -36,17 +37,19 @@ step:	a.out
 	@sh lib/stepper -- $(STEPPER_CMD)
 
 .c.o:
-	clang-tidy -quiet -warnings-as-errors='*' -checks=$(CLANG_TIDY_CHECKS) $< -- $(DEBUG_CFLAGS)
-	clang $(DEBUG_CFLAGS) -c $< -o $@
+	@if command -v clang-tidy >/dev/null 2>&1; then \
+		clang-tidy -quiet -warnings-as-errors='*' -checks=$(CLANG_TIDY_CHECKS) $< -- $(DEBUG_CFLAGS); \
+	fi
+	$(CC) $(DEBUG_CFLAGS) -c $< -o $@
 
 .c.opt.o:
-	clang $(OPT_CFLAGS) -c $< -o $@
+	$(CC) $(OPT_CFLAGS) -c $< -o $@
 
 a.out:	$(DEBUG_OBJECTS)
-	clang $(DEBUG_LDFLAGS) $^ -o $@
+	$(CC) $(DEBUG_LDFLAGS) $^ -o $@
 
 opt.out: $(OPT_OBJECTS)
-	clang $(OPT_LDFLAGS) $^ -o $@
+	$(CC) $(OPT_LDFLAGS) $^ -o $@
 
 clean:
 	rm -f core *.o *.opt.o *.out *.xml *.plist

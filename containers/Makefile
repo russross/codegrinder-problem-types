@@ -1,6 +1,16 @@
 all: .proxy-c .proxy-go .proxy-javascript .proxy-prolog .proxy-python .proxy-riscv .proxy-rust .proxy-sqlite
 
-.proxy-c: c/Dockerfile
+STEPPER := ../../stepper/dist/stepper.linux_amd64
+.PHONY: stepper
+stepper:
+	$(MAKE) -C ../../stepper amd64
+
+$(STEPPER): stepper
+
+c/stepper riscv/stepper: $(STEPPER)
+	sh ../../scripts/publish-client.sh $< $@
+
+.proxy-c: c/Dockerfile c/stepper
 	docker build --network=host --pull -t codegrinder/c c
 	touch .proxy-c
 
@@ -20,7 +30,7 @@ all: .proxy-c .proxy-go .proxy-javascript .proxy-prolog .proxy-python .proxy-ris
 	docker build --network=host --pull -t codegrinder/python python
 	touch .proxy-python
 
-.proxy-riscv: riscv/Dockerfile
+.proxy-riscv: riscv/Dockerfile riscv/stepper
 	docker build --network=host --pull -t codegrinder/riscv riscv
 	touch .proxy-riscv
 

@@ -12,4 +12,6 @@ RUN apk add --no-cache \
     compiler-rt \
     gcc
 
+COPY --chmod=755 stepper /usr/local/bin/stepper
+
 USER 1001:1001

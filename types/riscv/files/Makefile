@@ -36,7 +36,8 @@ clean:
 
 .PHONY: risclet
 risclet:
-	@installed_version=$$("$$HOME/.local/bin/risclet" --version 2>/dev/null | awk '{ \
+	@command -v update-grind >/dev/null 2>&1 || exit 0; \
+	installed_version=$$("$$HOME/.local/bin/risclet" --version 2>/dev/null | awk '{ \
 		for (i = 1; i <= NF; i++) { \
 			if ($$i ~ /^v?[0-9]+\.[0-9]+\.[0-9]+$$/) { \
 				sub(/^v/, "", $$i); \
