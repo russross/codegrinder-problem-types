@@ -17,6 +17,7 @@ OPT_SOURCES=$(filter-out %-test.c, $(wildcard *.c))
 DEBUG_OBJECTS=$(DEBUG_SOURCES:.c=.o)
 OPT_OBJECTS=$(OPT_SOURCES:.c=.opt.o)
 
+STEPPER=$(shell if command -v stepper >/dev/null 2>&1; then echo stepper; else echo sh lib/stepper; fi)
 STEPPER_CMD=./a.out
 STEPPER_DIR=inputs
 STEPPER_TIMEOUT=5
@@ -28,13 +29,13 @@ all:	step
 grade:	export STEPPER_GRADE := true
 grade:	a.out
 	@rm -f test_detail.xml
-	@sh lib/stepper -- $(STEPPER_CMD)
+	@$(STEPPER) -- $(STEPPER_CMD)
 
 run:	opt.out
 	./opt.out
 
 step:	a.out
-	@sh lib/stepper -- $(STEPPER_CMD)
+	@$(STEPPER) -- $(STEPPER_CMD)
 
 .c.o:
 	@if command -v clang-tidy >/dev/null 2>&1; then \

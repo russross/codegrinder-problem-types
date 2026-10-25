@@ -6,9 +6,10 @@ START=$(filter start.s, $(ALLSRC))
 AOUTSRC=$(START) $(filter-out $(START), $(ALLSRC))
 RISCLET_VERSION=v0.5.5
 
+STEPPER=$(shell if command -v stepper >/dev/null 2>&1; then echo stepper; else echo sh lib/stepper; fi)
 STEPPER_CMD=risclet run --strict $(AOUTSRC)
 STEPPER_DIR=inputs
-STEPPER_TIMEOUT=5
+STEPPER_TIMEOUT=10
 STEPPER_GRADE=false
 export STEPPER_CMD STEPPER_DIR STEPPER_TIMEOUT STEPPER_GRADE
 
@@ -17,13 +18,13 @@ all:	step
 grade:	export STEPPER_GRADE := true
 grade:	risclet
 	@rm -f test_detail.xml
-	@sh lib/stepper -- $(STEPPER_CMD)
+	@$(STEPPER) -- $(STEPPER_CMD)
 
 run:	risclet
 	risclet run $(AOUTSRC)
 
 step:	risclet
-	@sh lib/stepper -- $(STEPPER_CMD)
+	@$(STEPPER) -- $(STEPPER_CMD)
 
 trace:	risclet
 	risclet trace $(AOUTSRC)
