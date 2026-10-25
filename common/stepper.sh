@@ -14,17 +14,9 @@ notify() { printf '\n' >&9; }
 
 # Match the established terminal feedback, including visible line endings.
 escape=$(printf '\033')
-rule=--------------------------------------------------------------------------------
-banner=================================================================================
 print_color() { printf '%s%s%s\n' "$escape[$1m" "$2" "$escape[0m"; }
 print_io() {
-    case $1 in
-        out) color=; ending=240 ;;
-        err) color=$escape'[93m'; ending=94 ;;
-        in) color=$escape'[94m'; ending=20 ;;
-    esac
-    IFS= read -r display_line < "$2"
-    printf '%s%s%s⏎%s\n' "$color" "$display_line" "$escape[38;5;${ending}m" "$escape[0m"
+    render_bytes < "$2" | print_context "$1" no
 }
 
 # Wrappers wait in a builtin so traps can interrupt blocked external commands.
@@ -109,12 +101,10 @@ done
 case $work in /*) ;; *) work=$PWD/$work ;; esac
 
 timeout=${STEPPER_TIMEOUT:-5}
-context=${STEPPER_POSTERRORLINES:-15}
 directory=${STEPPER_DIR:-inputs}
 grade=${STEPPER_GRADE:-false}
 transform=${STEPPER_INPUT_TRANSFORM:-'s/\.transcript$/.input/'}
 case $timeout in ''|*[!0-9]*) fatal 'STEPPER_TIMEOUT must be a positive integer' ;; esac
-case $context in ''|*[!0-9]*) fatal 'STEPPER_POSTERRORLINES must be a nonnegative integer' ;; esac
 [ "$timeout" -gt 0 ] || fatal 'STEPPER_TIMEOUT must be positive'
 case $grade in true|false) ;; *) fatal 'STEPPER_GRADE must be true or false' ;; esac
 if [ "$grade" = true ]; then rm -f test_detail.xml || fatal 'cannot remove old report'; fi
@@ -272,18 +262,25 @@ read_phase() {
 match_stream() {
     stream=$1; next=$2; end=$3; matched=$4; batch=0
     while [ "$next" -le "$end" ] && [ -f "$case_dir/$stream/$next" ]; do
-        if ! cmp -s "$case_dir/expected-$stream/$next" "$case_dir/$stream/$next"; then
+        # Shell readers can discard NUL bytes. Verify the original captured bytes
+        # before accepting a record or moving the failure-context offset.
+        size=$(wc -c < "$case_dir/expected-$stream/$next")
+        dd if="$case_dir/$stream.raw" bs=1 skip="$matched" count="$size" \
+            2>/dev/null > "$case_dir/match.raw"
+        if ! cmp -s "$case_dir/expected-$stream/$next" "$case_dir/$stream/$next" ||
+            ! cmp -s "$case_dir/expected-$stream/$next" "$case_dir/match.raw"; then
+            failure_kind=incorrect; failure_stream=$stream
             source_line=$(cat "$case_dir/expected-$stream/$next.source")
             if [ "$stream" = out ]; then stream_name=stdout; else stream_name=stderr; fi
             reason="Output mismatch on $stream_name."; return 1
         fi
-        size=$(wc -c < "$case_dir/expected-$stream/$next")
         matched=$((matched + size)); next=$((next + 1)); batch=$((batch + 1))
         progress=$now
         [ "$batch" -lt 64 ] || break
     done
     if [ "$next" -le "$end" ] && [ -f "$case_dir/$stream/eof" ] &&
         [ ! -f "$case_dir/$stream/$next" ]; then
+        failure_kind=missing; failure_stream=$stream
         source_line=$(cat "$case_dir/expected-$stream/$next.source")
         if [ "$stream" = out ]; then stream_name=stdout; else stream_name=stderr; fi
         reason="Program closed $stream_name before producing expected output."; return 1
@@ -349,10 +346,16 @@ run_manager() {
             else limit=$err_bytes; stream_name=stderr; fi
             bytes=$(wc -c < "$case_dir/$stream.raw")
             if [ "$bytes" -gt "$limit" ]; then
-                if [ "$input_number" -eq 0 ]; then
+                if { [ "$stream" = out ] && [ "$out_next" -le "$out_end" ]; } ||
+                    { [ "$stream" = err ] && [ "$err_next" -le "$err_end" ]; }; then
+                    failure_kind=incorrect; failure_stream=$stream
+                    reason="Output mismatch on $stream_name."
+                elif [ "$input_number" -eq 0 ]; then
+                    failure_kind=extra; failure_stream=$stream
                     reason='Program produced unexpected extra output after completion.'
                     source_line=$(( $(wc -l < "$transcript") + 1 ))
                 else
+                    failure_kind=early; failure_stream=$stream
                     reason="Program produced output on $stream_name before expected input."
                 fi
                 return 1
@@ -382,6 +385,7 @@ run_manager() {
                 status=$(cat "$case_dir/exit-status")
                 for stream in out err; do
                     cmp -s "$case_dir/expected-$stream.raw" "$case_dir/$stream.raw" || {
+                        failure_kind=extra; failure_stream=$stream
                         source_line=$(( $(wc -l < "$transcript") + 1 ))
                         reason='Program produced unexpected extra output after completion.'; return 1;
                     }
@@ -394,108 +398,113 @@ run_manager() {
             fi
         fi
         if [ $((now - progress)) -ge "$timeout" ]; then
+            if [ "$out_next" -le "$out_end" ]; then reason='timed out waiting for stdout'
+            elif [ "$err_next" -le "$err_end" ]; then reason='timed out waiting for stderr'
+            elif [ "$pending" -ne 0 ]; then reason='timed out waiting for input delivery'
+            else reason='timed out waiting for program termination'; fi
             if [ "$out_next" -le "$out_end" ]; then
                 source_line=$(cat "$case_dir/expected-out/$out_next.source")
             elif [ "$err_next" -le "$err_end" ]; then
                 source_line=$(cat "$case_dir/expected-err/$err_next.source")
             fi
-            reason='Timeout waiting for expected output, input delivery, or program termination'
             return 1
         fi
         IFS= read -r wake <&8 || { reason='Notification channel closed'; return 1; }
     done
 }
 
-# Render bytes explicitly: some BusyBox sed builds accept l without implementing
-# it. Printable ASCII remains readable; other bytes use unambiguous octal escapes.
+# Render control bytes without letting student output change terminal formatting.
+# UTF-8 bytes remain intact; incomplete final lines have no newline marker.
 render_bytes() {
-    od -An -v -tu1 | awk -v tail="${1:-[no newline]}" '
-        BEGIN { text="\"" }
+    od -An -v -tu1 | awk '
         {
+            text=""
             for (i=1; i<=NF; i++) {
                 byte=$i+0
-                if (byte == 10) { print text "\\n\""; text="\"" }
-                else if (byte == 9) text=text "\\t"
+                if (byte == 10) { text=text "\\n\n"; tail=0; continue }
+                if (byte == 9) text=text "\\t"
                 else if (byte == 13) text=text "\\r"
-                else if (byte == 92) text=text "\\\\"
-                else if (byte == 34) text=text "\\\""
-                else if (byte >= 32 && byte <= 126) text=text sprintf("%c", byte)
-                else text=text sprintf("\\%03o", byte)
+                else if (byte < 32 || byte == 127) text=text sprintf("\\%03o", byte)
+                else text=text sprintf("%c", byte)
+                tail=1
             }
+            printf "%s", text
         }
-        END { if (text != "\"") print text "\" " tail }
+        END { if (tail) print " [no newline]" }
     '
 }
 
-# Capture context is limited in bytes as well as lines so runaway output cannot
-# swamp the report. Offsets refer to original bytes, not the rendered display.
-report_failure() {
-    printf '\n'
-    print_color '1;91' "$banner"
-    print_color '1;91' '                                  TEST FAILED                                   '
-    print_color '1;91' "$banner"
-    printf '\n'
-    print_color '1;94' '--- Expected Next Steps ---'
-    printf 'Transcript: %s (line %s)\n' "$transcript" "$source_line"
-    completed_inputs=0
-    if [ -f "$case_dir/input-status" ]; then completed_inputs=$(cat "$case_dir/input-status"); fi
-    awk -v out="$((out_next - 1))" -v err="$((err_next - 1))" \
-        -v input="$completed_inputs" -v limit="$context" '
-        /^> / { if (++o <= out) next }
-        /^! / { if (++e <= err) next }
-        /^< / { if (++i <= input) next }
-        { if (++shown <= limit) print }
-    ' "$transcript" | dd bs=1 count=20000 2>/dev/null > "$case_dir/preview"
-    if [ ! -s "$case_dir/preview" ]; then
-        if [ "$context" -eq 0 ]; then printf '(Expected context disabled)\n'
-        else printf '(No more actions were expected from the transcript)\n'; fi
-    fi
-    while :; do
-        record=
-        if IFS= read -r record; then complete=yes; else complete=no; fi
-        [ "$complete" = yes ] || [ -n "$record" ] || break
-        case $record in
-            '> '*) prefix='EXPECTED STDOUT:'; code=94 ;;
-            '! '*) prefix='EXPECTED STDERR:'; code=93 ;;
-            '< '*) prefix='EXPECTED STDIN:'; code=94 ;;
-        esac
-        if [ "$complete" = yes ]; then
-            representation=$(printf '%s\n' "${record#??}" | render_bytes)
-        else
-            representation=$(printf '%s' "${record#??}" | render_bytes '[truncated at 20000 bytes]')
-        fi
-        printf '%s%-20s%s%s\n' "$escape[${code}m" "$prefix" "$representation" "$escape[0m"
-    done < "$case_dir/preview"
-    printf '\n'
-    print_color '1;93' '--- Actual Program Output (Context) ---'
-    shown=0
-    case $reason in
-        'Output mismatch on stderr.') report_streams='err out' ;;
-        *) report_streams='out err' ;;
+# A context block belongs to one stream and is bounded by bytes and lines.
+# The ending sentinel distinguishes a real newline from an unfinished fragment.
+print_context() {
+    context_stream=$1; inverse=$2
+    case $context_stream in
+        out) context_color= ;;
+        err) context_color=$escape'[35m' ;;
+        in) context_color=$escape'[36m' ;;
     esac
-    for stream in $report_streams; do
-        if [ "$stream" = out ]; then offset=${out_matched:-0}; else offset=${err_matched:-0}; fi
-        dd if="$case_dir/$stream.raw" bs=1 skip="$offset" count=20000 2>/dev/null |
-            render_bytes > "$case_dir/context"
-        while IFS= read -r representation; do
-            [ "$shown" -lt "$context" ] || break
-            if [ "$stream" = out ]; then prefix='SUBSEQUENT STDOUT:'; else prefix='SUBSEQUENT STDERR:'; fi
-            case $reason in
-                'Output mismatch on stdout.') [ "$stream" != out ] || [ "$shown" -ne 0 ] || prefix='MISMATCHED LINE:' ;;
-                'Output mismatch on stderr.') [ "$stream" != err ] || [ "$shown" -ne 0 ] || prefix='MISMATCHED LINE:' ;;
-            esac
-            printf '%s%-20s%s%s\n' "$escape[93m" "$prefix" "$representation" "$escape[0m"
-            shown=$((shown + 1))
-        done < "$case_dir/context"
-    done
-    if [ "$shown" -eq 0 ]; then printf '(No further output from program before timeout or exit)\n'; fi
-    printf '\n'
-    print_color '1;91' '--- Failure Summary ---'
-    print_color 91 "Reason: $reason"
-    if [ -f "$case_dir/exit-status" ]; then
-        printf 'Exit status: '; cat "$case_dir/exit-status"
+    awk -v escape="$escape" -v color="$context_color" -v inverse="$inverse" '
+        {
+            printf "%s", color
+            if (inverse == "yes") printf "%s[7m", escape
+            if (substr($0, length($0)-1) == "\\n")
+                printf "%s%s[2m⏎", substr($0, 1, length($0)-2), escape
+            else printf "%s%s[2m [no newline]", substr($0, 1, length($0)-13), escape
+            printf "%s[0m\n", escape
+        }
+    '
+}
+report_failure() {
+    if [ -n "$failure_stream" ]; then
+        stream=$failure_stream
+        if [ "$stream" = out ]; then
+            stream_name=stdout; offset=$out_matched; first=$out_next; last=$out_end
+        else
+            stream_name=stderr; offset=$err_matched; first=$err_next; last=$err_end
+        fi
+        # Collect only the failing stream after its successfully matched bytes.
+        dd if="$case_dir/$stream.raw" bs=1 skip="$offset" count=20001 2>/dev/null > "$case_dir/context.raw"
+        context_bytes=$(wc -c < "$case_dir/context.raw")
+        head -c 20000 "$case_dir/context.raw" | render_bytes > "$case_dir/context.lines"
+        head -n 5 "$case_dir/context.lines" | print_context "$stream" yes
+        context_lines=$(wc -l < "$case_dir/context.lines")
+        if [ "$context_bytes" -gt 20000 ] || [ "$context_lines" -gt 5 ]; then
+            print_color 2 '[output truncated]'
+        fi
+        case $failure_kind in
+            incorrect) transition="$stream_name is incorrect—the highlighted lines should have been:" ;;
+            extra) transition="unexpected $stream_name—the highlighted lines were unexpected" ;;
+            early) transition="unexpected $stream_name—input was expected before the highlighted lines" ;;
+            missing) transition="$stream_name ended early—the following lines were missing:" ;;
+        esac
+        print_color '1;31' "!!!!! $transition"
+        # Phase boundaries prevent expected context from crossing unsent input.
+        if [ "$failure_kind" = incorrect ] || [ "$failure_kind" = missing ]; then
+            : > "$case_dir/expected-context.raw"
+            shown=0
+            while [ "$first" -le "$last" ] && [ "$shown" -lt 5 ]; do
+                cat "$case_dir/expected-$stream/$first" >> "$case_dir/expected-context.raw"
+                first=$((first + 1)); shown=$((shown + 1))
+            done
+            head -c 20000 "$case_dir/expected-context.raw" | render_bytes | print_context "$stream" no
+            expected_bytes=$(wc -c < "$case_dir/expected-context.raw")
+            if [ "$first" -le "$last" ] || [ "$expected_bytes" -gt 20000 ]; then
+                print_color 2 '[expected output truncated]'
+            fi
+        fi
+        reason="incorrect $stream_name"
+    else
+        case $reason in
+            'Program closed its input stream prematurely.'|'Program exited before all input was sent')
+                reason='stdin closed before all input was sent' ;;
+            'Program exited with non-zero status code: '*) reason= ;;
+        esac
     fi
-    print_color '1;91' "$banner"
+    # Cleanup can terminate a student process; only its earlier status counts.
+    if [ -n "$observed_status" ] && [ "$observed_status" -ne 0 ]; then
+        reason="${reason:+$reason/}incorrect exit status: $observed_status"
+    fi
+    print_color '1;31' "!!!!! test failed: $reason"
 }
 
 # Rotate arguments recursively to substitute embedded placeholders without eval
@@ -504,13 +513,11 @@ replace_arguments() {
     remaining=$1; shift
     if [ "$remaining" -eq 0 ]; then
         if [ "$argument_mode" = display ]; then
-            printf '%s$' "$escape[93m"
+            printf '$'
             for argument do
-                printf " '"
-                printf '%s' "$argument" | sed "s/'/'\\\\''/g"
-                printf "'"
+                printf ' %s' "$argument"
             done
-            printf '%s\n\n' "$escape[0m"
+            printf '\n'
         else supervise "$@"; fi
         return
     fi
@@ -524,19 +531,26 @@ replace_arguments() {
     replace_arguments "$((remaining - 1))" "$@" "$replaced$arg"
 }
 run_case() {
-    reason=; source_line=1; out_matched=0; err_matched=0; case_time=0
+    reason=; failure_kind=; failure_stream=; observed_status=
+    source_line=1; out_matched=0; err_matched=0; case_time=0
     out_next=1; err_next=1; sent_inputs=0
     display_action=; display_out=1; display_err=1; display_input=1
-    compile || return 1
+    if ! compile > "$case_dir/compile.log"; then
+        reason=$(cat "$case_dir/compile.log")
+        print_color '1;31' "!!!!! test failed: $reason"
+        return 1
+    fi
     input_path=$(printf '%s\n' "$transcript" | sed "$transform") || {
-        printf 'Invalid input transform\n'; return 1;
+        print_color '1;31' '!!!!! test failed: invalid input transform'; return 1;
     }
     argument_mode=display
     replace_arguments "$#" "$@" > "$case_dir/command.log"
     cat "$case_dir/command.log"
     argument_mode=run
     mkfifo "$case_dir/in.fifo" "$case_dir/out.fifo" "$case_dir/err.fifo" \
-        "$case_dir/out.lines" "$case_dir/err.lines" "$case_dir/wake" "$case_dir/control" || return 1
+        "$case_dir/out.lines" "$case_dir/err.lines" "$case_dir/wake" "$case_dir/control" || {
+        print_color '1;31' '!!!!! test failed: cannot create stream channels'; return 1;
+    }
     : > "$case_dir/out.raw"; : > "$case_dir/err.raw"
     printf '0\n' > "$case_dir/clock"
     clock_worker & workers=$!
@@ -549,10 +563,11 @@ run_case() {
     replace_arguments "$#" "$@" & workers="$workers $!"
     exec 7>"$case_dir/control"
     if run_manager; then result=0; else result=1; fi
+    if [ -f "$case_dir/exit-status" ]; then observed_status=$(cat "$case_dir/exit-status"); fi
     stop_case
     case_time=$(cat "$case_dir/clock")
     exec 4<&- 5<&-
-    if [ "$result" -eq 0 ]; then printf '\n'; print_color '1;92' '✔ Test Passed'
+    if [ "$result" -eq 0 ]; then print_color 32 '✔'
     else
         report_failure > "$case_dir/failure.log"
         cat "$case_dir/failure.log"
@@ -600,12 +615,12 @@ for transcript in "$directory"/*.transcript; do
     [ -f "$transcript" ] || continue
     tests=$((tests + 1)); case_dir=$work/case.$tests
     mkdir "$case_dir" || fatal 'cannot create test directory'
-    printf '%s\n' "$rule"
     mkfifo "$case_dir/log.fifo" || fatal 'cannot create log FIFO'
     forward_log & logger=$!
     if run_case "$@" > "$case_dir/log.fifo"; then passed=true; else passed=false; failures=$((failures + 1)); fi
     # Drain the final feedback before another case or summary can write output.
     wait "$logger"; log_status=$?; logger=
+    printf '\n'
     [ "$log_status" -eq 0 ] || fatal 'cannot forward case log'
     total_time=$((total_time + case_time))
     if [ "$grade" = true ]; then
@@ -626,10 +641,9 @@ for transcript in "$directory"/*.transcript; do
         fi
         printf '</testcase>\n' >> "$work/cases.xml"
     elif [ "$passed" = false ]; then
-        printf '\n'; print_color '1;91' 'Exiting due to test failure.'; break
+        break
     fi
 done
-printf '%s\n' "$rule"
 if [ "$failures" -eq 0 ]; then summary_color='1;92'; else summary_color='1;91'; fi
 print_color "$summary_color" "Passed $((tests - failures))/$tests tests in $total_time seconds ($total total)"
 if [ "$grade" = true ]; then

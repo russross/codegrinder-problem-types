@@ -4,12 +4,11 @@ Stepper review and regression checks
 Run the regression suite from the project root:
 
 ```sh
-sh tests/stepper.sh dash
-sh tests/stepper.sh bash
-sh tests/stepper.sh /path/to/bash-3.2
+make -C common test
 ```
 
-The optional argument selects the shell that runs `lib/stepper.sh`. To test a
+The test script's optional argument selects the shell that runs `common/stepper.sh`:
+`sh common/tests/stepper.sh /path/to/shell`. To test a
 BusyBox environment, install its applet links in a temporary directory, put
 that directory first in `PATH`, and select its `sh`. The suite uses standard
 Unix utilities. It also validates XML with `xmllint` when available.
@@ -47,11 +46,23 @@ Retained differences are:
     `@INPUT@` substitution preserves argument boundaries and cannot execute
     shell syntax. `STEPPER_INPUT_TRANSFORM` uses portable sed expressions;
     Python uses Python regular expressions and reparses the substituted command.
-*   Successful display follows transcript order and uses the same stream colors
-    and visible line endings as Python. Failure reports use the same principal
-    sections and aligned labels. Byte representations use double quotes and
-    octal escapes for non-ASCII bytes. Context is bounded by bytes and lines;
-    subsequent output is captured until cleanup rather than actively awaited.
+*   Successful display follows transcript order: stdout uses the default foreground,
+    stdin cyan, and stderr magenta. Actual newline markers use the stream color
+    with ANSI dim. Commands use a simple `$` prompt with arguments displayed
+    literally; execution preserves argument boundaries independently.
+*   Failure reports show one inverse-video block from the failing stream, followed
+    by a bold red explanation and expected output when applicable. Both blocks
+    stop at five lines and 20,000 bytes, with explicit truncation notices; expected
+    context also stops before the next input. This fixed limit replaces
+    `STEPPER_POSTERRORLINES`. Control bytes are escaped, UTF-8 remains readable,
+    and unterminated fragments have `[no newline]` rather than a newline marker.
+    Subsequent output is captured until cleanup rather than actively awaited.
+
+Each test ends with a green checkmark or one bold red failure line, then one
+blank line. Failures distinguish incorrect output, early or extra output,
+premature EOF, timeouts, input closure, and observed nonzero exit status.
+Only an exit status observed before cleanup appears in the report. The runner
+reports the first detected failure and retains the single-line test summary.
 
 JUnit failure text contains the substituted command and failure report, without
 ANSI codes or the preceding successful dialogue. Test durations are integral.

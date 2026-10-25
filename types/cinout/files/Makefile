@@ -19,22 +19,21 @@ OPT_OBJECTS=$(OPT_SOURCES:.c=.opt.o)
 STEPPER_CMD=./a.out
 STEPPER_DIR=inputs
 STEPPER_TIMEOUT=5
-STEPPER_POSTERRORLINES=15
 STEPPER_GRADE=false
-export STEPPER_CMD STEPPER_DIR STEPPER_TIMEOUT STEPPER_POSTERRORLINES STEPPER_GRADE
+export STEPPER_CMD STEPPER_DIR STEPPER_TIMEOUT STEPPER_GRADE
 
 all:	step
 
 grade:	export STEPPER_GRADE := true
 grade:	a.out
 	@rm -f test_detail.xml
-	python3 lib/stepper
+	@sh lib/stepper -- $(STEPPER_CMD)
 
 run:	opt.out
 	./opt.out
 
 step:	a.out
-	python3 lib/stepper
+	@sh lib/stepper -- $(STEPPER_CMD)
 
 .c.o:
 	clang-tidy -quiet -warnings-as-errors='*' -checks=$(CLANG_TIDY_CHECKS) $< -- $(DEBUG_CFLAGS)

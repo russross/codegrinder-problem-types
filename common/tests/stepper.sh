@@ -2,7 +2,7 @@
 # Exercise the public runner protocol with real processes and private fixtures.
 set -u
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-runner=$root/lib/stepper.sh
+runner=$root/stepper.sh
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' 0
 trap 'exit 130' INT
@@ -20,7 +20,7 @@ check() {
     (
         cd "$case_root" || exit 2
         export TMPDIR=$case_root/tmp STEPPER_TIMEOUT=1 STEPPER_DIR=inputs
-        export STEPPER_POSTERRORLINES=15 STEPPER_GRADE=false
+        export STEPPER_GRADE=false
         "$shell" "$runner" -- sh student.sh
     ) > "$case_root/log" 2>&1
     actual=$?
@@ -38,28 +38,42 @@ check() {
 
 # EOF is required even when no input actions exist, and after the last input.
 program='cat >/dev/null; printf "done\n"'
-check no-input 0 '✔ Test Passed' <<'EOF'
+check no-input 0 '✔' <<'EOF'
 > done
 EOF
 program='printf "prompt\n"; IFS= read -r line; printf "%s\n" "$line"; cat >/dev/null; printf "done\n"'
-check dialogue 0 '✔ Test Passed' <<'EOF'
+check dialogue 0 '✔' <<'EOF'
 > prompt
 < a b \ c
 > a b \ c
 > done
 EOF
+escape=$(printf '\033')
+sed "s/$escape\[[0-9;]*m//g" "$case_root/log" > "$case_root/plain"
+cat > "$case_root/expected" <<'EOF'
+$ sh student.sh
+prompt⏎
+a b \ c⏎
+a b \ c⏎
+done⏎
+✔
+
+EOF
+head -n 7 "$case_root/plain" | cmp -s - "$case_root/expected" || exit 1
+grep -Fq "$escape[36ma b" "$case_root/log" || exit 1
+grep -Fq "$escape[2m⏎" "$case_root/log" || exit 1
 program='exit 0'
-check empty 0 '✔ Test Passed' <<'EOF'
+check empty 0 '✔' <<'EOF'
 EOF
 
 # Streams have independent ordering; their terminal display follows the fixture.
 program='printf "err\n" >&2; printf "out\n"'
-check interleaved 0 '✔ Test Passed' <<'EOF'
+check interleaved 0 '✔' <<'EOF'
 > out
 ! err
 EOF
 program='printf "one\ntwo\n" >&2; printf "three\n"'
-check display-order 0 '✔ Test Passed' <<'EOF'
+check display-order 0 '✔' <<'EOF'
 ! one
 > three
 ! two
@@ -101,7 +115,7 @@ for live_grade in false true; do
     wait "$manager" || { cat "$case_root/log"; exit 1; }
     sed "s/$escape\[[0-9;]*m//g" "$case_root/log" > "$case_root/plain"
     awk '/^early⏎$/ { a=NR; early++ } /^late⏎$/ { b=NR; late++ }
-        /✔ Test Passed/ { c=NR } /^Passed / { d=NR }
+        /✔/ { c=NR } /^Passed / { d=NR }
         END { exit !(early == 1 && late == 1 && a < b && b < c && c < d) }' \
         "$case_root/plain" || exit 1
     [ -z "$(ls -A "$case_root/tmp")" ] || exit 1
@@ -111,67 +125,107 @@ for live_grade in false true; do
     checks=$((checks + 1))
 done
 
-# Output failures retain the mismatched record, partial tail, and next input.
+# Failure context uses one stream, followed by expected lines before the input.
 program='printf "wrong\nmore\n"'
-check mismatch 1 'MISMATCHED LINE:.*wrong' <<'EOF'
+check mismatch 1 'stdout is incorrect' <<'EOF'
 > right
 > more
 < next
 EOF
+sed "s/$escape\[[0-9;]*m//g" "$case_root/log" > "$case_root/plain"
+awk '/^wrong⏎$/ { a=NR } /^!!!!! stdout is incorrect/ { b=NR }
+    /^right⏎$/ { c=NR } /^!!!!! test failed: incorrect stdout/ { d=NR }
+    /^next/ { bad=1 }
+    END { exit !(a && a < b && b < c && c < d && !bad) }' "$case_root/plain" || exit 1
+grep -Fq "$escape[7mwrong" "$case_root/log" || exit 1
 program='printf "wrong\n" >&2'
-check stderr-mismatch 1 'Output mismatch on stderr' <<'EOF'
+check stderr-mismatch 1 'stderr is incorrect' <<'EOF'
 ! right
 EOF
+grep -Fq "$escape[35m$escape[7mwrong" "$case_root/log" || exit 1
 program='printf "partial"'
 check partial 1 'no newline' <<'EOF'
 > partial
 EOF
+grep -Fq "$escape[7mpartial$escape[2m [no newline]$escape[0m" "$case_root/log" || exit 1
 program='printf "extra\n"'
-check extra 1 'unexpected extra output after completion' <<'EOF'
+check extra 1 'unexpected stdout' <<'EOF'
 EOF
 program='printf "\000ok\n"'
-check binary 1 'Reason:' <<'EOF'
+check binary 1 'incorrect stdout' <<'EOF'
 > ok
 EOF
+grep -Fq '\000ok' "$case_root/log" || exit 1
 program='printf "early\n"; sleep 5'
-check early 1 'before expected input' <<'EOF'
+check early 1 'input was expected before' <<'EOF'
+! waiting
 < input
 > early
 EOF
 program='printf "early\n" >&2; sleep 5'
-check early-stderr 1 'before expected input' <<'EOF'
+check early-stderr 1 'input was expected before' <<'EOF'
+> waiting
 < input
 ! early
 EOF
 
+# Long failure blocks stop at five lines and never include the other stream.
+program='printf "a1\na2\na3\na4\na5\na6\n"; printf "other-stream\n" >&2'
+check bounded-context 1 'output truncated' <<'EOF'
+> e1
+> e2
+> e3
+> e4
+> e5
+> e6
+! other-stream
+EOF
+sed "s/$escape\[[0-9;]*m//g" "$case_root/log" > "$case_root/plain"
+grep -q '^a5⏎$' "$case_root/plain" || exit 1
+grep -q '^e5⏎$' "$case_root/plain" || exit 1
+if grep -Eq 'a6|e6|other-stream' "$case_root/plain"; then exit 1; fi
+
+# A huge single line is visibly bounded without inventing a newline.
+program='awk '\''BEGIN { for(i=0;i<21000;i++) printf "x" }'\'''
+awk 'BEGIN { printf "> "; for(i=0;i<22000;i++) printf "x"; print "" }' > "$test_root/long-expected"
+check bounded-bytes 1 'output truncated' < "$test_root/long-expected"
+grep -q 'no newline' "$case_root/log" || exit 1
+
+# Missing stderr uses its own transition and expected color.
+program='exit 0'
+check missing-stderr 1 'stderr ended early' <<'EOF'
+! absent
+EOF
+grep -Fq "$escape[35mabsent" "$case_root/log" || exit 1
+
 # Termination, missing output, and blocked writes all have bounded waits.
 program='exit 7'
-check nonzero 1 'non-zero status code: 7' <<'EOF'
+check nonzero 1 'incorrect exit status: 7' <<'EOF'
 EOF
 program='exit 7'
-check missing 1 'before producing expected output' <<'EOF'
+check missing 1 'stdout ended early' <<'EOF'
 > absent
 EOF
 program='sleep 5'
-check timeout-output 1 'Timeout' <<'EOF'
+check timeout-output 1 'timed out waiting for' <<'EOF'
 > absent
 EOF
 program='printf "done\n"; sleep 5'
-check timeout-exit 1 'Timeout' <<'EOF'
+check timeout-exit 1 'timed out waiting for' <<'EOF'
 > done
 EOF
 program='sleep 5'
 awk 'BEGIN { printf "< "; for(i=0;i<100000;i++) printf "x"; print "" }' > "$test_root/large"
-check blocked-input 1 'Timeout' < "$test_root/large"
+check blocked-input 1 'timed out waiting for' < "$test_root/large"
 program='IFS= read -r line; printf "%s\n" "$line"'
 sed 's/^< /> /' "$test_root/large" >> "$test_root/large.expected"
 cat "$test_root/large" "$test_root/large.expected" > "$test_root/large.dialogue"
-check long-line 0 '✔ Test Passed' < "$test_root/large.dialogue"
+check long-line 0 '✔' < "$test_root/large.dialogue"
 program='exec 0<&-; printf "ready\n"; sleep 5'
 printf '> ready\n' > "$test_root/closed-input.transcript"
 cat "$test_root/large" >> "$test_root/closed-input.transcript"
-check closed-input 1 'closed its input stream prematurely' < "$test_root/closed-input.transcript"
-grep -q 'EXPECTED STDIN:' "$case_root/log" || exit 1
+check closed-input 1 'stdin closed before all input was sent' < "$test_root/closed-input.transcript"
+grep -q '!!!!! test failed: stdin closed' "$case_root/log" || exit 1
 
 # Author errors fail cleanly before starting the program.
 program='exit 0'
@@ -214,7 +268,7 @@ printf '> <tag>& "quote"\n' > "$case_root/inputs/2.transcript"
 [ "$?" -eq 1 ] || { cat "$case_root/log"; exit 1; }
 grep -q 'tests="2" failures="1"' "$case_root/test_detail.xml" || exit 1
 grep -q 'status="failed"' "$case_root/test_detail.xml" || exit 1
-grep -q 'MISMATCHED LINE:.*&lt;tag&gt;&amp;' "$case_root/test_detail.xml" || exit 1
+grep -q '&lt;tag&gt;&amp;' "$case_root/test_detail.xml" || exit 1
 if grep -q "$escape" "$case_root/test_detail.xml"; then exit 1; fi
 if command -v xmllint >/dev/null 2>&1; then
     xmllint --noout "$case_root/test_detail.xml" || exit 1
