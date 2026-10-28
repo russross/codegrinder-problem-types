@@ -14,5 +14,6 @@ RUN apk add --no-cache \
     py3-six \
     diffutils
 RUN pip3 install --break-system-packages unittest-xml-reporting cisc108
+ENV PYTHONDONTWRITEBYTECODE=1
 
 USER 1001:1001

@@ -9,4 +9,6 @@ RUN apk add --no-cache \
 RUN apk add --no-cache -X http://dl-cdn.alpinelinux.org/alpine/edge/testing \
     swi-prolog
 
+COPY --chmod=755 stepper /usr/local/bin/stepper
+
 USER 1001:1001

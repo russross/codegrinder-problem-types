@@ -7,7 +7,7 @@ stepper:
 
 $(STEPPER): stepper
 
-c/stepper riscv/stepper: $(STEPPER)
+c/stepper prolog/stepper riscv/stepper: $(STEPPER)
 	sh ../../scripts/publish-client.sh $< $@
 
 .proxy-c: c/Dockerfile c/stepper
@@ -22,7 +22,7 @@ c/stepper riscv/stepper: $(STEPPER)
 	docker build --network=host --pull -t codegrinder/javascript javascript
 	touch .proxy-javascript
 
-.proxy-prolog: prolog/Dockerfile
+.proxy-prolog: prolog/Dockerfile prolog/stepper
 	docker build --network=host --pull -t codegrinder/prolog prolog
 	touch .proxy-prolog
 

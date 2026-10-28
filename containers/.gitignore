@@ -1,3 +1,2 @@
 .proxy-*
-c/stepper
-riscv/stepper
+*/stepper
